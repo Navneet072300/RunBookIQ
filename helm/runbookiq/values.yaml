@@ -1,0 +1,128 @@
+## RunbookIQ Helm Chart Values
+
+global:
+  imageRegistry: ""
+
+# ── API service ───────────────────────────────────────────────────────────────
+api:
+  replicaCount: 2
+  image:
+    repository: runbookiq/api
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  env:
+    APP_ENV: production
+    LOG_LEVEL: INFO
+  livenessProbe:
+    httpGet:
+      path: /api/v1/health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 20
+  readinessProbe:
+    httpGet:
+      path: /api/v1/health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# ── Worker service ────────────────────────────────────────────────────────────
+worker:
+  replicaCount: 2
+  image:
+    repository: runbookiq/api
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  queues: "high default low"
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: runbookiq/frontend
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  hosts:
+    - host: runbookiq.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: api
+        - path: /
+          pathType: Prefix
+          backend: frontend
+  tls:
+    - secretName: runbookiq-tls
+      hosts:
+        - runbookiq.example.com
+
+# ── HPA ───────────────────────────────────────────────────────────────────────
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# ── Secrets (references only — populate via external-secrets or manual) ───────
+secrets:
+  # Create the secret manually or via external-secrets operator:
+  #   kubectl create secret generic runbookiq-secrets \
+  #     --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+  #     --from-literal=DATABASE_URL=postgresql+asyncpg://... \
+  #     --from-literal=REDIS_URL=redis://... \
+  #     --from-literal=OPENAI_API_KEY=sk-...
+  existingSecret: "runbookiq-secrets"
+
+# ── Persistence (for runbook uploads) ────────────────────────────────────────
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 10Gi
+  accessMode: ReadWriteMany
+
+# ── PostgreSQL (external — use CloudSQL, RDS, or Zalando postgres-operator) ──
+postgresql:
+  enabled: false
+  # Set DATABASE_URL in the secret
+
+# ── Redis (external recommended; or use bitnami/redis subchart) ──────────────
+redis:
+  enabled: false
+  # Set REDIS_URL in the secret

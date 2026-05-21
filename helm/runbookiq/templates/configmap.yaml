@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "runbookiq.fullname" . }}-config
+  labels:
+    {{- include "runbookiq.labels" . | nindent 4 }}
+data:
+  APP_ENV: {{ .Values.api.env.APP_ENV | quote }}
+  LOG_LEVEL: {{ .Values.api.env.LOG_LEVEL | quote }}
+  UPLOAD_DIR: "/app/uploads"
+  DEFAULT_TENANT_ID: "default"
