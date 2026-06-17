@@ -1,8 +1,8 @@
 """
-LLM caller — uses Google Gemini via the OpenAI-compatible API.
+LLM caller — uses Groq via the OpenAI-compatible API.
 
-Gemini base URL: https://generativelanguage.googleapis.com/v1beta/openai/
-Free tier: ~1M tokens/day with gemini-2.0-flash (get key at aistudio.google.com)
+Free tier: groq.com — llama-3.3-70b-versatile, 14,400 req/day, 131K context.
+Get a key at console.groq.com
 """
 import json
 import re
@@ -24,8 +24,8 @@ def get_llm_client() -> AsyncOpenAI:
     global _client
     if _client is None:
         _client = AsyncOpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=settings.gemini_base_url,
+            api_key=settings.groq_api_key,
+            base_url=settings.groq_base_url,
         )
     return _client
 

@@ -20,16 +20,17 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # Gemini (LLM + embeddings via OpenAI-compatible API)
-    gemini_api_key: str = ""
-    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    llm_model: str = "gemini-2.0-flash"
+    # Groq (LLM — OpenAI-compatible, free tier)
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "llama-3.3-70b-versatile"
     llm_max_tokens: int = 4096
 
-    # Embeddings
+    # Gemini (embeddings only — free tier, separate quota from LLM)
+    gemini_api_key: str = ""
     embedding_model: str = "text-embedding-004"
     embedding_batch_size: int = 100
-    embedding_dimensions: int = 768  # text-embedding-004 outputs 768 dims
+    embedding_dimensions: int = 768
 
     # Slack
     slack_webhook_url: Optional[str] = None
