@@ -2,19 +2,36 @@
 
 **AI-powered incident triage and runbook assistant for DevOps and platform engineering teams.**
 
-RunbookIQ ingests alerts from Prometheus/Alertmanager, Kubernetes events, and Zabbix, then uses a RAG pipeline backed by pgvector to retrieve relevant runbook context and generate structured triage playbooks in real time — powered by Google Gemini.
+RunbookIQ connects to your Kubernetes cluster, Prometheus/Alertmanager, and Zabbix — then uses a RAG pipeline to retrieve relevant runbook context and generate structured triage playbooks in real time using Groq's Llama 3.3 70B.
+
+---
+
+## Screenshots
+
+### Dashboard
+
+![Dashboard](assets/dashboard.png)
+
+### Incidents — Real K8s Events
+
+![Incidents](assets/incidents.png)
+
+### AI Triage Playbook
+
+![Playbook](assets/playbook.png)
 
 ---
 
 ## Features
 
-- **Multi-source alert ingestion** — Prometheus webhooks, Kubernetes events, Zabbix problems
-- **Automatic deduplication** — SHA-256 fingerprint + 5-minute Redis TTL prevents noise storms
-- **RAG-generated playbooks** — pgvector HNSW similarity search retrieves your runbooks, Gemini writes the triage steps
+- **Live Kubernetes event streaming** — connects directly to your cluster via kubeconfig, streams events in real time with automatic reconnection
+- **Multi-source alert ingestion** — Prometheus/Alertmanager webhooks, Kubernetes events, Zabbix problems
+- **Automatic deduplication** — SHA-256 fingerprint + 5-minute Redis TTL, no noise storms
+- **RAG-generated playbooks** — pgvector HNSW similarity search retrieves your runbooks, Groq Llama 3.3 generates structured triage steps
 - **SSE streaming** — playbook text streams token-by-token to the UI
-- **Auto-remediation** — dry-run and one-click approve for common K8s remediations (restart, scale, cordon, rollback)
+- **Auto-remediation** — dry-run and one-click approve for K8s remediations (restart, scale, cordon, rollback)
 - **Runbook indexing** — upload PDF/DOCX/Markdown; chunks are embedded and stored in pgvector
-- **Slack notifications** — Block Kit incident cards sent on playbook generation
+- **Slack notifications** — Block Kit incident cards on playbook generation
 - **Dark-theme React UI** — incident list, playbook viewer, runbook manager, metrics dashboard
 - **Multi-tenancy ready** — `X-Tenant-ID` header and `tenant_id` column on all models
 - **Helm chart** — production Kubernetes deployment included
@@ -24,13 +41,13 @@ RunbookIQ ingests alerts from Prometheus/Alertmanager, Kubernetes events, and Za
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | API | FastAPI + Uvicorn (async) |
 | Database | PostgreSQL 16 + pgvector (HNSW, cosine, 768 dims) |
 | ORM / Migrations | SQLAlchemy 2.0 async + Alembic |
 | Queue | Redis + RQ (high / default / low) |
-| LLM | Google Gemini 2.0 Flash (via OpenAI-compat endpoint) |
-| Embeddings | Google text-embedding-004 (native batchEmbedContents API) |
+| LLM | Groq — Llama 3.3 70B Versatile (free tier, OpenAI-compatible) |
+| Embeddings | Google text-embedding-004 (native batchEmbedContents API, 768 dims) |
 | Frontend | React 18 + Vite + Tailwind CSS v3 |
 | Logging | structlog (JSON in production, console in dev) |
 | Container | Docker Compose (dev) · Helm chart (prod) |
@@ -42,21 +59,23 @@ RunbookIQ ingests alerts from Prometheus/Alertmanager, Kubernetes events, and Za
 ### Prerequisites
 
 - Docker + Docker Compose
-- A free Google Gemini API key — get one at [aistudio.google.com](https://aistudio.google.com)
+- Free [Groq API key](https://console.groq.com) — 14,400 req/day, no credit card
+- Free [Google Gemini API key](https://aistudio.google.com) — for embeddings only
 
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/runbookiq.git
-cd runbookiq
+git clone https://github.com/Navneet072300/RunBookIQ.git
+cd RunBookIQ
 
 cp .env.example .env
 ```
 
-Open `.env` and set at minimum:
+Open `.env` and set:
 
 ```env
-GEMINI_API_KEY=AIza...          # from aistudio.google.com
+GROQ_API_KEY=gsk_...          # from console.groq.com
+GEMINI_API_KEY=AIza...        # from aistudio.google.com (embeddings only)
 POSTGRES_PASSWORD=changeme
 SECRET_KEY=your-random-32-char-string
 ```
@@ -67,7 +86,7 @@ SECRET_KEY=your-random-32-char-string
 docker compose up -d
 ```
 
-This starts: `postgres`, `redis`, `api` (FastAPI), `worker` (RQ), `frontend` (Vite dev server).
+Starts: `postgres`, `redis`, `api` (FastAPI), `worker` (RQ), `frontend` (Vite).
 
 ### 3. Run database migrations
 
@@ -78,43 +97,74 @@ docker compose exec api alembic upgrade head
 ### 4. Seed demo data (optional)
 
 ```bash
-docker compose exec api python backend/scripts/seed_demo.py
+docker compose exec api python scripts/seed_demo.py
 ```
 
 ### 5. Open the UI
 
-```
+```text
 http://localhost:5173       — React UI
 http://localhost:8000/docs  — Swagger API docs
-http://localhost:8000/redoc — ReDoc
 ```
+
+---
+
+## Connect Your Kubernetes Cluster
+
+RunbookIQ streams live events directly from your cluster and generates playbooks automatically.
+
+### Setup
+
+In your `.env`:
+
+```env
+K8S_KUBECONFIG=/root/.kube/config
+K8S_NAMESPACE=your-namespace    # e.g. hrms, production, default
+```
+
+In `docker-compose.yml` the kubeconfig is already mounted:
+
+```yaml
+volumes:
+  - ${HOME}/.kube:/root/.kube:ro
+```
+
+Start the stack — the watcher auto-starts on API startup:
+
+```bash
+docker compose up -d
+docker compose logs -f api | grep k8s
+# k8s_watcher_started  namespace=your-namespace ✓
+```
+
+Every pod crash, OOMKill, BackOff, or node pressure event now flows into RunbookIQ and generates a triage playbook automatically.
 
 ---
 
 ## Architecture
 
-```
-Prometheus / Kubernetes / Zabbix
-            │
-            ▼
-  POST /api/v1/alerts/ingest
-            │
-            ▼
+```text
+Kubernetes Events / Prometheus / Zabbix
+              │
+              ▼
+  POST /api/v1/alerts/ingest   ◄── K8s watcher (live stream)
+              │
+              ▼
   Normaliser  ──►  Dedup check (Redis, 5-min TTL, SHA-256)
-            │
-            ▼
-      RQ Worker (async)
-            │
-            ├─ embed query  ──►  pgvector HNSW similarity_search
-            │                    (text-embedding-004, 768 dims)
-            │
-            ├─ prompt_builder (runbook chunks + alert context)
-            │
-            ├─ Gemini 2.0 Flash  ──►  structured PlaybookResponse
-            │
-            ├─ Slack Block Kit notification
-            │
-            └─ SSE stream  ──►  React frontend
+              │
+              ▼
+        RQ Worker (async)
+              │
+              ├─ embed query  ──►  pgvector HNSW similarity_search
+              │                    (text-embedding-004, 768 dims)
+              │
+              ├─ prompt_builder (runbook chunks + alert context)
+              │
+              ├─ Groq Llama 3.3 70B  ──►  structured PlaybookResponse
+              │
+              ├─ Slack Block Kit notification
+              │
+              └─ SSE stream  ──►  React frontend
 ```
 
 ---
@@ -122,7 +172,7 @@ Prometheus / Kubernetes / Zabbix
 ## API Reference
 
 | Method | Path | Description |
-|--------|------|-------------|
+| ------ | ---- | ----------- |
 | `GET` | `/api/v1/health` | Liveness probe |
 | `POST` | `/api/v1/alerts/ingest` | Ingest Prometheus / K8s / Zabbix alert |
 | `GET` | `/api/v1/incidents` | Paginated incident list |
@@ -176,28 +226,24 @@ curl -X POST http://localhost:8000/api/v1/alerts/ingest \
   }'
 ```
 
-**Zabbix problem:**
+**Prometheus Alertmanager config:**
 
-```bash
-curl -X POST http://localhost:8000/api/v1/alerts/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "zabbix",
-    "payload": {
-      "event_id": "12345",
-      "name": "Disk space is low on /data",
-      "severity": "high",
-      "host": "db-prod-01",
-      "clock": 1705312800
-    }
-  }'
+```yaml
+receivers:
+  - name: runbookiq
+    webhook_configs:
+      - url: http://<your-host>:8000/api/v1/alerts/ingest
+        send_resolved: true
+
+route:
+  receiver: runbookiq
 ```
 
 ---
 
 ## Runbook Indexing
 
-Upload a file via the UI or API:
+Upload your runbooks via the UI or API — they are chunked, embedded, and used as context when generating playbooks.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/runbooks/upload \
@@ -208,35 +254,28 @@ curl -X POST http://localhost:8000/api/v1/runbooks/upload \
 
 Supported formats: `.md`, `.txt`, `.pdf`, `.docx`
 
-Chunks are embedded with `text-embedding-004` (768 dims) and stored in pgvector with an HNSW index for fast cosine similarity retrieval.
-
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in your values.
-
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GEMINI_API_KEY` | ✅ | — | Google Gemini API key (aistudio.google.com) |
-| `GEMINI_BASE_URL` | | `...googleapis.com/v1beta/openai/` | Gemini OpenAI-compat base URL |
-| `LLM_MODEL` | | `gemini-2.0-flash` | LLM model name |
-| `EMBEDDING_MODEL` | | `text-embedding-004` | Embedding model name |
+| -------- | -------- | ------- | ----------- |
+| `GROQ_API_KEY` | ✅ | — | Groq API key — [console.groq.com](https://console.groq.com) |
+| `GROQ_BASE_URL` | | `https://api.groq.com/openai/v1` | Groq OpenAI-compat endpoint |
+| `LLM_MODEL` | | `llama-3.3-70b-versatile` | Groq model to use |
+| `GEMINI_API_KEY` | ✅ | — | Google Gemini key for embeddings only |
+| `EMBEDDING_MODEL` | | `text-embedding-004` | Embedding model (768 dims) |
 | `DATABASE_URL` | ✅ | — | `postgresql+asyncpg://user:pass@host/db` |
 | `REDIS_URL` | ✅ | — | `redis://host:6379/0` |
 | `POSTGRES_PASSWORD` | ✅ | — | PostgreSQL password |
-| `SECRET_KEY` | ✅ | — | 32-char random string for JWT signing |
+| `SECRET_KEY` | ✅ | — | 32-char random string |
 | `APP_ENV` | | `development` | `development` or `production` |
 | `LOG_LEVEL` | | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `SLACK_WEBHOOK_URL` | Optional | — | Incoming webhook for incident notifications |
-| `ZABBIX_API_URL` | Optional | — | `http://zabbix.internal/api_jsonrpc.php` |
-| `ZABBIX_USER` | Optional | — | Zabbix API user |
-| `ZABBIX_PASSWORD` | Optional | — | Zabbix API password |
-| `K8S_KUBECONFIG` | Optional | in-cluster | Path to kubeconfig (leave blank inside cluster) |
-| `K8S_NAMESPACE` | Optional | `default` | Target namespace for remediations |
+| `K8S_KUBECONFIG` | Optional | — | Path to kubeconfig inside container |
+| `K8S_NAMESPACE` | Optional | `default` | Namespace to watch |
+| `SLACK_WEBHOOK_URL` | Optional | — | Slack incoming webhook |
+| `ZABBIX_API_URL` | Optional | — | Zabbix API URL |
 | `PROMETHEUS_ALERTMANAGER_URL` | Optional | — | Alertmanager base URL |
-| `UPLOAD_DIR` | | `/app/uploads` | Runbook file storage path |
-| `MAX_UPLOAD_SIZE_MB` | | `50` | Maximum upload size |
 
 ---
 
@@ -248,56 +287,21 @@ pip install -r requirements.txt
 pytest
 ```
 
-Tests cover: API health, alert normalisation (Prometheus / K8s / Zabbix), and RAG orchestrator unit tests with mocked embeddings and LLM.
-
 ---
 
 ## Helm Deployment (Kubernetes)
 
 ```bash
-# Create the secrets
 kubectl create secret generic runbookiq-secrets \
+  --from-literal=GROQ_API_KEY=gsk_... \
   --from-literal=GEMINI_API_KEY=AIza... \
   --from-literal=DATABASE_URL=postgresql+asyncpg://... \
   --from-literal=REDIS_URL=redis://... \
   --from-literal=SECRET_KEY=...
 
-# Install the chart
 helm install runbookiq ./helm/runbookiq \
   --set ingress.hosts[0].host=runbookiq.yourdomain.com \
   --set api.image.tag=1.0.0
-```
-
-Adjust resource limits and replica counts in `helm/runbookiq/values.yaml`.
-
----
-
-## Project Structure
-
-```
-runbookiq/
-├── backend/
-│   ├── alembic/              # Database migrations
-│   ├── app/
-│   │   ├── api/              # FastAPI route handlers
-│   │   ├── core/             # Config, logging, Redis, DB session
-│   │   ├── embeddings/       # Gemini embedder + runbook ingest
-│   │   ├── models/           # SQLAlchemy ORM models
-│   │   ├── normaliser/       # Alert normalisation (Prometheus/K8s/Zabbix)
-│   │   ├── rag/              # RAG orchestrator + Gemini caller
-│   │   ├── schemas/          # Pydantic request/response schemas
-│   │   └── main.py           # FastAPI app entry point
-│   ├── scripts/
-│   │   └── seed_demo.py      # Demo data seeder
-│   └── tests/
-├── frontend/
-│   └── src/
-│       ├── api/              # Axios API client
-│       ├── components/       # React components
-│       └── pages/            # Route pages
-├── helm/runbookiq/           # Helm chart
-├── docker-compose.yml
-└── .env.example
 ```
 
 ---
@@ -310,8 +314,6 @@ runbookiq/
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# Start postgres + redis first (or use docker compose up postgres redis)
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
@@ -328,6 +330,38 @@ rq worker --with-scheduler --url redis://localhost:6379/0 default high low
 cd frontend
 npm install
 npm run dev
+```
+
+---
+
+## Project Structure
+
+```text
+RunBookIQ/
+├── backend/
+│   ├── alembic/              # Database migrations
+│   ├── app/
+│   │   ├── api/              # FastAPI route handlers
+│   │   ├── core/             # Config, logging, Redis, DB session
+│   │   ├── embeddings/       # Gemini embedder + runbook ingest
+│   │   ├── ingestion/        # Alert normaliser + K8s/Prometheus/Zabbix connectors
+│   │   ├── models/           # SQLAlchemy ORM models
+│   │   ├── rag/              # RAG orchestrator + Groq LLM caller
+│   │   ├── remediation/      # kubectl runner + remediation registry
+│   │   ├── schemas/          # Pydantic schemas
+│   │   └── main.py
+│   ├── scripts/
+│   │   └── seed_demo.py
+│   └── tests/
+├── frontend/
+│   └── src/
+│       ├── api/              # Axios API client
+│       ├── components/       # React components
+│       └── pages/            # Route pages
+├── helm/runbookiq/           # Helm chart
+├── assets/                   # Screenshots
+├── docker-compose.yml
+└── .env.example
 ```
 
 ---

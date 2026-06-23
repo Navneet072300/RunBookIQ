@@ -40,6 +40,7 @@ services:
     volumes:
       - ./backend:/app
       - runbook_uploads:/app/uploads
+      - ${HOME}/.kube:/root/.kube:ro
     ports:
       - "8000:8000"
     depends_on:

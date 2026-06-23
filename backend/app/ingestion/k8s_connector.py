@@ -54,7 +54,7 @@ async def stream_k8s_events(
                 v1.list_namespaced_event,
                 namespace=ns,
                 resource_version=resource_version,
-                timeout_seconds=0,
+                timeout_seconds=45,
             ):
                 loop.call_soon_threadsafe(queue.put_nowait, event["object"].to_dict())
         except Exception as exc:
