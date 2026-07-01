@@ -1,0 +1,126 @@
+lines, no code fences. Also need a guideme.md file per instructions. Wait: The system says after all generated files, always append a file named 'guideme.md' with specific sections. So we must include that too. Primary tool: github-actions, but we still need guideme. So total three files: ci-cd.yml, setup-guide.md, guideme.md.
+
+We need to produce production-ready pipeline.
+
+Let's design workflow:
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/Navneet072300/RunBookIQ
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract short SHA
+      id: vars
+      run: echo "GIT_SHA=$(echo ${{ github.sha }} | cut -c1-12)" >> $GITHUB_OUTPUT
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.GIT_SHA }}
+          ${{ env.IMAGE_NAME }}:latest
+
+    - name: Install Infisical CLI
+      uses: supplypike/setup-infisical@v1
+      with:
+        version: "latest"
+
+    - name: Export secrets from Infisical
+      env:
+        INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+      run: |
+        infisical run --env=prod -- printenv > infisical.env
+        # Export each line
+        set -o allexport
+        source infisical.env
+        set +o allexport
+
+    - name: Decode kubeconfig
+      env:
+        KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      run: |
+        echo "${KUBE_CONFIG}" | base64 -d > $HOME/.kube/config
+
+    - name: Set image in Kubernetes deployment
+      env:
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        GIT_SHA: ${{ steps.vars.outputs.GIT_SHA }}
+      run: |
+        kubectl set image deployment/runbookiq runbookiq=${{ env.IMAGE_NAME }}:${{ env.GIT_SHA }}
+    
+    - name: Verify rollout status
+      run: |
+        kubectl rollout status deployment/runbookiq --timeout=120s
+
+Maybe add a step to install kubectl.
+
+- name: Set up kubectl
+  uses: azure/setup-kubectl@v4
+  with:
+    version: 'v1.28.0'
+
+Also ensure we use jq? Not needed.
+
+Will also need to make the deployment name and container name same as app. We use "runbookiq".
+
+All steps.
+
+Now setup-guide.md:
+
+Checklist of secrets: INFISICAL_TOKEN, KUBE_CONFIG (base64). Also GITHUB_TOKEN is automatic.
+
+One-time steps: ensure you have a Kubernetes deployment named runbookiq with container named runbookiq; ensure GHCR repository exists (automatic on push). Add KUBE_CONFIG secret via GitHub Settings > Secrets and variables > Actions.
+
+Trigger first pipeline: push a commit to main.
+
+Now guideme.md according to requirements:
+
+## What Was Generated
+Summarize.
+
+## Prerequisites
+List tool versions: GitHub Actions runner uses ubuntu-latest; docker/build-push-action v5; docker/login-action v3; docker/setup-buildx-action v3; actions/checkout v4; azure/setup-kubectl v4; supplypike/setup-infisical v1.
+
+## Step-by-Step Implementation
+Provide steps to add file (commit) and set secrets.
+
+## Verify It Worked
+Kubectl rollout status, docker images list via ghcr.
+
+## Troubleshooting
+Provide 3-5 error messages and fixes: authentication to GHCR, Infisical token missing, kubeconfig decode fails, kubectl set image fails (deployment not found), rollout timeout.
+
+Now produce output.
+
+Make sure file separators exactly as required.
+
+Let's craft guideme.md content.
+
+Proceed.<|end|><|start|>assistant<|channel|>final<|message|>
