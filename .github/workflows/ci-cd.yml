@@ -1,0 +1,81 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ghcr.io/Navneet072300/RunBookIQ
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.28.0'
+
+      - name: Extract short git SHA
+        id: git_sha
+        run: echo "GIT_SHA=$(echo ${{ github.sha }} | cut -c1-12)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.git_sha.outputs.GIT_SHA }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Install Infisical CLI
+        uses: supplypike/setup-infisical@v1
+        with:
+          version: "latest"
+
+      - name: Export secrets from Infisical (prod)
+        env:
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+        run: |
+          # Export all environment variables from Infisical into the runner environment
+          infisical run --env=prod -- printenv > /tmp/infisical.env
+          set -o allexport
+          source /tmp/infisical.env
+          set +o allexport
+
+      - name: Decode and write kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${KUBE_CONFIG}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Update image in Kubernetes deployment
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          GIT_SHA: ${{ steps.git_sha.outputs.GIT_SHA }}
+        run: |
+          kubectl set image deployment/runbookiq runbookiq=${IMAGE_NAME}:${GIT_SHA}
+
+      - name: Wait for rollout to complete
+        run: |
+          kubectl rollout status deployment/runbookiq --timeout=180s
