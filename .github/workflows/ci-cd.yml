@@ -47,7 +47,7 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
 
       - name: Install Infisical CLI
-        uses: supplypike/setup-infisical@v1
+        uses: infisical/setup-infisal@v1
         with:
           version: "latest"
 
